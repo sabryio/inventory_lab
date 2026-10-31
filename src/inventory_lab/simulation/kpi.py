@@ -31,6 +31,7 @@ class KpiAccumulator:
         self._backorder_integral = 0.0
         self._stockout_time = 0.0
         self._demanded = self._filled_now = self._filled_late = self._lost = 0
+        self._wasted = 0
         self._received = self._orders = self._emergency_orders = 0
         self._ordered = self._ordered_emergency = 0
         self._ordering_cost = self._purchasing_cost = 0.0
@@ -63,6 +64,7 @@ class KpiAccumulator:
         self._demanded += consumption.requested
         self._filled_now += consumption.filled_now
         self._lost += consumption.lost
+        self._wasted += consumption.wasted_units
         self._demand_events += 1
         if consumption.filled_now == consumption.requested:
             self._demand_events_full += 1
@@ -70,6 +72,10 @@ class KpiAccumulator:
     def record_receipt(self, receipt: Receipt) -> None:
         self._received += receipt.received
         self._filled_late += receipt.backlog_cleared
+
+    def record_expiry(self, wasted: int) -> None:
+        """Record units scrapped directly by an ExpiryEvent (not via demand)."""
+        self._wasted += wasted
 
     def record_order(self, order: PurchaseOrder) -> None:
         self._orders += 1
@@ -93,6 +99,7 @@ class KpiAccumulator:
             backorder_penalty=self._cost.backorder_penalty_per_unit_day
             * self._backorder_integral,
             lost_sales_penalty=self._cost.lost_sale_penalty_per_unit * self._lost,
+            waste_penalty=self._cost.waste_penalty_per_unit * self._wasted,
         )
         served = self._filled_now + self._filled_late
         return KpiSnapshot(
@@ -101,6 +108,7 @@ class KpiAccumulator:
             units_filled_immediately=self._filled_now,
             units_filled_late=self._filled_late,
             units_lost=self._lost,
+            units_wasted=self._wasted,
             units_received=self._received,
             units_ordered=self._ordered,
             units_ordered_emergency=self._ordered_emergency,

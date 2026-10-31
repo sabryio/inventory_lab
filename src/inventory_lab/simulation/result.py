@@ -1,5 +1,6 @@
 # src/inventory_lab/simulation/result.py
 """Immutable results — the contract between simulation and reporting."""
+
 from __future__ import annotations
 
 from inventory_lab.domain.base import ValueObject
@@ -14,6 +15,7 @@ class KpiSnapshot(ValueObject):
     units_filled_immediately: int
     units_filled_late: int
     units_lost: int
+    units_wasted: int
     units_received: int
     units_ordered: int
     units_ordered_emergency: int

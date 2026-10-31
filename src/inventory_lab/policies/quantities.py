@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from math import ceil
+
 from inventory_lab.ports.policy import QuantityRule, SizingContext
 
 
@@ -38,3 +40,22 @@ class MinMaxRule(QuantityRule):
 
     def describe(self) -> str:
         return "(s + Q) - net_inventory"
+
+
+class MultiFixedLotRule(QuantityRule):
+    """(R,s,n·Q): order ceil(gap / Q)·Q — truckload-friendly, still threshold-gated.
+
+    Closes the gap between current net inventory and S by ordering in whole multiples
+    of Q. Useful when Q represents a packaging unit (case, pallet) and partial orders
+    are not accepted by the supplier.
+    """
+
+    def quantity(self, ctx: SizingContext) -> int:
+        q = ctx.parameters.require_order_quantity()
+        gap = ctx.parameters.require_order_up_to() - ctx.net_inventory
+        if gap <= 0:
+            return 0
+        return int(ceil(gap / q) * q)
+
+    def describe(self) -> str:
+        return "ceil(gap/Q)·Q (packaging multiple)"

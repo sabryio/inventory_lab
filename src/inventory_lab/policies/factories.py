@@ -11,6 +11,7 @@ from inventory_lab.policies.composite import MultiSourcePolicy
 from inventory_lab.policies.quantities import (
     FixedQuantityRule,
     MinMaxRule,
+    MultiFixedLotRule,
     OrderUpToRule,
 )
 from inventory_lab.policies.rule_based import RuleBasedPolicy
@@ -115,6 +116,16 @@ def _build_r_s_s(
 ) -> InventoryPolicy:
     return _build_rule_policy(
         config, ctx, "(R,s,S)", ReorderPointTrigger(), MinMaxRule()
+    )
+
+
+@policy_registry.register("R_s_nQ", ReplenishmentPolicyConfig)
+def _build_r_s_nq(
+    config: ReplenishmentPolicyConfig, ctx: BuildContext
+) -> InventoryPolicy:
+    """(R,s,n·Q): periodic review with reorder-point trigger, orders in packaging multiples."""
+    return _build_rule_policy(
+        config, ctx, "(R,s,nQ)", ReorderPointTrigger(), MultiFixedLotRule()
     )
 
 

@@ -10,6 +10,8 @@ class CostModel(ValueObject):
     backorder_penalty_per_unit_day: NonNegativeFloat = 0.5
     lost_sale_penalty_per_unit: NonNegativeFloat = 4.0
     """Margin + goodwill loss when a patient walks away."""
+    waste_penalty_per_unit: NonNegativeFloat = 3.5
+    """Cost of expired units: purchase cost recovery + disposal charge."""
 
 
 class CostBreakdown(ValueObject):
@@ -18,6 +20,7 @@ class CostBreakdown(ValueObject):
     purchasing: NonNegativeFloat = 0.0
     backorder_penalty: NonNegativeFloat = 0.0
     lost_sales_penalty: NonNegativeFloat = 0.0
+    waste_penalty: NonNegativeFloat = 0.0
 
     @property
     def total(self) -> float:
@@ -27,4 +30,5 @@ class CostBreakdown(ValueObject):
             + self.purchasing
             + self.backorder_penalty
             + self.lost_sales_penalty
+            + self.waste_penalty
         )

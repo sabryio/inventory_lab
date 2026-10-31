@@ -118,3 +118,84 @@ def pharmacy_experiment(
             ),
         ),
     )
+
+
+def pharmacy_stress_experiment(
+    replications: int = 10, horizon_days: int = 365
+) -> ExperimentSpec:
+    """Stress test: high demand variance, long lead times, short shelf life.
+
+    Includes the (R,s,nQ) packaging-multiple candidate alongside the standard
+    four policies so the comparison reveals how lot-sizing strategy interacts
+    with waste under shelf-life pressure.
+    """
+    weekly = ComponentSpec(kind="weekly", params={"weekdays": [4], "hour": 18})
+    continuous = ComponentSpec(kind="continuous")
+
+    regular_sizing = ComponentSpec(
+        kind="rounded",
+        params={"inner": {"kind": "eoq"}, "multiple": 12, "minimum": 24},
+    )
+    statistical = ComponentSpec(
+        kind="statistical",
+        params={"safety": {"kind": "normal"}, "sizing": regular_sizing},
+    )
+
+    def regular_policy(kind: str, schedule: ComponentSpec) -> ComponentSpec:
+        return ComponentSpec(
+            kind=kind,
+            params={
+                "lane_id": REGULAR,
+                "schedule": schedule.model_dump(),
+                "parameters": statistical.model_dump(),
+            },
+        )
+
+    return ExperimentSpec(
+        name="pharmacy_stress_test",
+        horizon_days=horizon_days,
+        warmup_days=30,
+        replications=replications,
+        initial_on_hand=100,
+        target_service_level=0.95,
+        shelf_life_days=90.0,  # short shelf life to create realistic waste pressure
+        cost_model=CostModel(
+            holding_cost_per_unit_day=0.003,
+            backorder_penalty_per_unit_day=0.80,
+            lost_sale_penalty_per_unit=5.0,
+            waste_penalty_per_unit=4.0,
+        ),
+        demand=ComponentSpec(
+            kind="poisson",
+            params={
+                "mean_daily": 18.0,
+                "weekday_factors": [1.5, 1.3, 1.1, 1.0, 1.4, 0.7, 0.3],
+            },
+        ),
+        forecast=ComponentSpec(
+            kind="rolling",
+            params={"prior_mean": 18.0, "prior_std": 5.0, "window_days": 60},
+        ),
+        lanes=(
+            SupplyLane(
+                lane_id=REGULAR,
+                kind=LaneKind.REGULAR,
+                lead_time=ComponentSpec(
+                    kind="normal", params={"mean_days": 7.0, "std_days": 2.5}
+                ),
+                unit_cost=3.50,
+                fixed_order_cost=10.0,
+                order_multiple=12,
+                min_order_quantity=24,
+            ),
+        ),
+        candidates=(
+            CandidateSpec(
+                name="continuous_sQ", policy=regular_policy("s_Q", continuous)
+            ),
+            CandidateSpec(name="weekly_RS", policy=regular_policy("R_S", weekly)),
+            CandidateSpec(name="weekly_RsQ", policy=regular_policy("R_s_Q", weekly)),
+            CandidateSpec(name="weekly_RsS", policy=regular_policy("R_s_S", weekly)),
+            CandidateSpec(name="weekly_Rs_nQ", policy=regular_policy("R_s_nQ", weekly)),
+        ),
+    )

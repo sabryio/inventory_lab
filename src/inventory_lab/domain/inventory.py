@@ -32,6 +32,12 @@ class InventoryState(ValueObject):
     backorders: NonNegativeInt = Field(
         default=0, description="Open, unfulfilled demand"
     )
+    batch_count: NonNegativeInt = Field(
+        default=0, description="Number of distinct batches in stock"
+    )
+    nearest_expiry_days: float | None = Field(
+        default=None, description="Simulation-time of the soonest batch expiry"
+    )
 
     @model_validator(mode="after")
     def _no_stock_and_backlog_simultaneously(self) -> Self:
@@ -78,6 +84,10 @@ class Consumption(ValueObject):
     filled_now: NonNegativeInt
     backordered: NonNegativeInt
     lost: NonNegativeInt
+    wasted_units: NonNegativeInt = Field(
+        default=0,
+        description="Units expired and discarded during this consumption event",
+    )
 
     @property
     def requested(self) -> int:
@@ -90,3 +100,5 @@ class Receipt(ValueObject):
     received: NonNegativeInt
     backlog_cleared: NonNegativeInt
     added_to_stock: NonNegativeInt
+    batch_id: str | None = None
+    expires_at: float | None = None

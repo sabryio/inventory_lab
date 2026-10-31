@@ -1,0 +1,106 @@
+# https://taskfile.dev
+version: "3"
+
+vars:
+  SRC: src
+  TESTS: tests
+
+tasks:
+  # ── dependency management ──────────────────────────────────────────────────
+
+  install:
+    desc: "Sync the virtual environment (install / update all dependencies)"
+    cmds:
+      - uv sync --all-groups
+
+  # ── code quality ──────────────────────────────────────────────────────────
+
+  fmt:
+    desc: "Auto-format code with ruff"
+    cmds:
+      - uv run ruff format {{.SRC}} {{.TESTS}}
+
+  lint:
+    desc: "Lint with ruff (errors only, no auto-fix)"
+    cmds:
+      - uv run ruff check {{.SRC}} {{.TESTS}}
+
+  lint:fix:
+    desc: "Lint and auto-fix safe violations"
+    cmds:
+      - uv run ruff check --fix {{.SRC}} {{.TESTS}}
+
+  typecheck:
+    desc: "Type-check with ty"
+    cmds:
+      - uv run ty check
+
+  # ── testing ───────────────────────────────────────────────────────────────
+
+  test:
+    desc: "Run the full test suite"
+    cmds:
+      - uv run pytest {{.TESTS}}
+
+  test:v:
+    desc: "Run tests with verbose output"
+    cmds:
+      - uv run pytest -v {{.TESTS}}
+
+  test:cov:
+    desc: "Run tests with coverage report (requires pytest-cov)"
+    cmds:
+      - uv run pytest --cov={{.SRC}} --cov-report=term-missing {{.TESTS}}
+
+  # ── combined workflows ────────────────────────────────────────────────────
+
+  check:
+    desc: "Run lint + typecheck + tests (full CI gate)"
+    cmds:
+      - task: lint
+      - task: typecheck
+      - task: test
+
+  ci:
+    desc: "Format, lint:fix, typecheck, test — everything in order"
+    cmds:
+      - task: fmt
+      - task: lint:fix
+      - task: typecheck
+      - task: test
+
+  # ── simulation shortcuts ──────────────────────────────────────────────────
+
+  run:pharmacy:
+    desc: "Run the baseline pharmacy experiment (single replication)"
+    cmds:
+      - uv run python scripts/run_pharmacy.py
+
+  run:stress:
+    desc: "Run the pharmacy stress experiment (single replication)"
+    cmds:
+      - uv run python scripts/run_stress.py
+
+  # ── housekeeping ──────────────────────────────────────────────────────────
+
+  clean:
+    desc: "Remove compiled Python files and pytest/coverage artefacts"
+    platforms: [windows]
+    cmds:
+      - cmd: if exist .pytest_cache rd /s /q .pytest_cache
+        ignore_error: true
+      - cmd: if exist .coverage del .coverage
+        ignore_error: true
+      - cmd: 'for /r . %d in (__pycache__) do @if exist "%d" rd /s /q "%d"'
+        ignore_error: true
+
+  clean:unix:
+    desc: "Remove compiled Python files and pytest/coverage artefacts (Linux/macOS)"
+    platforms: [linux, darwin]
+    cmds:
+      - cmd: rm -rf .pytest_cache .coverage
+        ignore_error: true
+      - cmd: find . -type d -name __pycache__ -exec rm -rf {} +
+        ignore_error: true
+      - cmd: find . -name "*.pyc" -delete
+        ignore_error: true

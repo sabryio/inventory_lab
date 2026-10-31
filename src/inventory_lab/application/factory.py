@@ -83,6 +83,7 @@ class SimulationFactory:
                 warmup_days=spec.warmup_days,
                 shortage_mode=spec.shortage_mode,
                 collect_trace=spec.collect_trace,
+                shelf_life_days=spec.shelf_life_days,
             ),
             clock=clock,
             ledger=InventoryLedger(spec.initial_on_hand, spec.shortage_mode),

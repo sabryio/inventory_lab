@@ -12,6 +12,7 @@ from inventory_lab.domain.base import PositiveInt, ValueObject
 from inventory_lab.domain.errors import OrderRejectedError, SimulationError
 from inventory_lab.domain.events import (
     DemandEvent,
+    ExpiryEvent,
     ReceiptEvent,
     ReviewEvent,
     SimEvent,
@@ -37,6 +38,8 @@ class EngineConfig(ValueObject):
     max_orders_per_event: PositiveInt = 8
     """Circuit breaker: a pathological parameterisation must fail loudly, not hang."""
     collect_trace: bool = False
+    shelf_life_days: float = 9_999.0
+    """Default shelf life for all received batches. Override per-lane in future."""
 
 
 class SimulationEngine:
@@ -127,6 +130,8 @@ class SimulationEngine:
                     self._on_scheduled_review(event, time)
                 case SnapshotEvent():
                     pass  # KPIs already accrued; snapshot events anchor the day boundary
+                case ExpiryEvent():
+                    self._on_expiry(event, time)
                 case _:  # pragma: no cover - discriminated union is exhaustive
                     raise SimulationError(f"unhandled event {event!r}")
 
@@ -145,12 +150,24 @@ class SimulationEngine:
     # ---- handlers -------------------------------------------------------
     def _on_receipt(self, event: ReceiptEvent, now: float) -> None:
         order = self._ledger.pop_order(event.order_id)
-        receipt = self._ledger.receive(order.quantity)
+        receipt = self._ledger.receive(
+            order.quantity,
+            order.unit_cost,
+            self._config.shelf_life_days,
+            now,
+        )
         self._kpi.record_receipt(receipt)
+        # Schedule an expiry event for this batch if it falls within the horizon.
+        if (
+            receipt.batch_id is not None
+            and receipt.expires_at is not None
+            and receipt.expires_at <= self._config.horizon_days
+        ):
+            self._push(ExpiryEvent(time=receipt.expires_at, batch_id=receipt.batch_id))
         self._review_continuous(now)
 
     def _on_demand(self, event: DemandEvent, now: float) -> None:
-        consumption = self._ledger.consume(event.quantity)
+        consumption = self._ledger.consume(event.quantity, now)
         self._kpi.record_demand(consumption)
         if self._forecast_observer is not None:
             self._forecast_observer.observe(self._clock.day_index(now), event.quantity)
@@ -166,6 +183,13 @@ class SimulationEngine:
         nxt = policy.schedule.next_after(now)
         if nxt is not None and nxt <= self._config.horizon_days:
             self._push(ReviewEvent(time=nxt, policy_id=policy.code))
+
+    def _on_expiry(self, event: ExpiryEvent, now: float) -> None:
+        """Remove the batch from stock and record the waste in KPIs."""
+        wasted = self._ledger.expire_batch(event.batch_id)
+        if wasted > 0:
+            self._kpi.record_expiry(wasted)
+            self._kpi.sync(self._ledger.snapshot())
 
     def _review_continuous(self, now: float) -> None:
         for policy in self._policies:

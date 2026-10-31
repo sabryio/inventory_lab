@@ -15,6 +15,7 @@ class EventKind(IntEnum):
     DEMAND = 1  # then patients arrive
     REVIEW = 2  # then we review and order
     SNAPSHOT = 3  # then we book the day
+    EXPIRY = 4  # batch expires and is removed from stock (same priority as snapshot)
 
 
 class ReceiptEvent(ValueObject):
@@ -40,7 +41,13 @@ class SnapshotEvent(ValueObject):
     kind: Literal[EventKind.SNAPSHOT] = EventKind.SNAPSHOT
 
 
+class ExpiryEvent(ValueObject):
+    time: NonNegativeFloat
+    kind: Literal[EventKind.EXPIRY] = EventKind.EXPIRY
+    batch_id: str
+
+
 SimEvent = Annotated[
-    ReceiptEvent | DemandEvent | ReviewEvent | SnapshotEvent,
+    ReceiptEvent | DemandEvent | ReviewEvent | SnapshotEvent | ExpiryEvent,
     Field(discriminator="kind"),
 ]

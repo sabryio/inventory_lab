@@ -31,6 +31,11 @@ class ExperimentSpec(ValueObject):
     target_service_level: Probability = 0.97
     collect_trace: bool = False
     cost_model: CostModel = CostModel()
+    shelf_life_days: float = Field(
+        default=9_999.0,
+        gt=0,
+        description="Default shelf life for received batches in days",
+    )
     demand: ComponentSpec
     forecast: ComponentSpec
     lanes: tuple[SupplyLane, ...]
