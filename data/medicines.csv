@@ -1,0 +1,11 @@
+sku_id,name,generic_name,form,strength,unit,supplier,category,unit_cost_egp,order_multiple,min_order_qty,shelf_life_days,service_level,markup_rate,disposal_rate
+SKU-001,Augmentin 625mg,Amoxicillin/Clavulanate,Tablet,625mg,Tab,Egyptian Pharma Co.,Antibiotics,185.00,12,24,730,0.99,0.35,0.10
+SKU-002,Brufen 400mg,Ibuprofen,Tablet,400mg,Tab,Nile Pharma,NSAIDs,12.50,10,10,1095,0.95,0.25,0.05
+SKU-003,Concor 5mg,Bisoprolol,Tablet,5mg,Tab,Egyptian Pharma Co.,Cardiology,95.00,14,14,1095,0.99,0.40,0.10
+SKU-004,Glucophage 500mg,Metformin,Tablet,500mg,Tab,Nile Pharma,Diabetes,18.75,10,10,1825,0.99,0.30,0.05
+SKU-005,Nexium 40mg,Esomeprazole,Capsule,40mg,Cap,Delta Pharma,GI,210.00,7,7,730,0.97,0.35,0.10
+SKU-006,Lipitor 20mg,Atorvastatin,Tablet,20mg,Tab,Egyptian Pharma Co.,Cardiology,145.00,14,14,1095,0.99,0.40,0.10
+SKU-007,Zithromax 500mg,Azithromycin,Tablet,500mg,Tab,Nile Pharma,Antibiotics,320.00,6,6,730,0.99,0.35,0.10
+SKU-008,Amoxil 500mg,Amoxicillin,Capsule,500mg,Cap,Delta Pharma,Antibiotics,28.00,12,12,730,0.97,0.30,0.08
+SKU-009,Crestor 10mg,Rosuvastatin,Tablet,10mg,Tab,Egyptian Pharma Co.,Cardiology,175.00,14,14,1095,0.99,0.40,0.10
+SKU-010,Plavix 75mg,Clopidogrel,Tablet,75mg,Tab,Nile Pharma,Cardiology,260.00,14,14,1095,0.99,0.40,0.10
