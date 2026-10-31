@@ -1,5 +1,5 @@
 # src/inventory_lab/infrastructure/presets.py
-"""Built-in pharmacy scenario: a fast-moving generic with an unreliable wholesaler."""
+"""Built-in pharmacy scenarios. All monetary values are in Egyptian Pounds (EGP)."""
 
 from __future__ import annotations
 
@@ -54,9 +54,10 @@ def pharmacy_experiment(
         initial_on_hand=150,
         target_service_level=0.97,
         cost_model=CostModel(
-            holding_cost_per_unit_day=0.0025,
-            backorder_penalty_per_unit_day=0.60,
-            lost_sale_penalty_per_unit=4.0,
+            holding_cost_per_unit_day=0.825,  # EGP — capital + storage (~25%/yr on EGP 176 unit)
+            backorder_penalty_per_unit_day=33.0,  # EGP / unit / day backordered
+            lost_sale_penalty_per_unit=220.0,  # EGP — margin + goodwill loss
+            waste_penalty_per_unit=192.5,  # EGP — purchase cost + disposal
         ),
         demand=ComponentSpec(
             kind="poisson",
@@ -76,8 +77,8 @@ def pharmacy_experiment(
                 lead_time=ComponentSpec(
                     kind="normal", params={"mean_days": 4.0, "std_days": 1.2}
                 ),
-                unit_cost=3.20,
-                fixed_order_cost=8.0,
+                unit_cost=176.0,  # EGP (≈ 3.20 EUR × 55)
+                fixed_order_cost=440.0,  # EGP (≈ 8 EUR × 55)
                 order_multiple=12,
                 min_order_quantity=24,
             ),
@@ -85,8 +86,8 @@ def pharmacy_experiment(
                 lane_id=EXPEDITE,
                 kind=LaneKind.EMERGENCY,
                 lead_time=ComponentSpec(kind="fixed", params={"days": 1.0}),
-                unit_cost=5.60,
-                fixed_order_cost=60.0,
+                unit_cost=308.0,  # EGP (≈ 5.60 EUR × 55)
+                fixed_order_cost=3_300.0,  # EGP (≈ 60 EUR × 55)
                 order_multiple=6,
                 min_order_quantity=6,
             ),
@@ -123,12 +124,7 @@ def pharmacy_experiment(
 def pharmacy_stress_experiment(
     replications: int = 10, horizon_days: int = 365
 ) -> ExperimentSpec:
-    """Stress test: high demand variance, long lead times, short shelf life.
-
-    Includes the (R,s,nQ) packaging-multiple candidate alongside the standard
-    four policies so the comparison reveals how lot-sizing strategy interacts
-    with waste under shelf-life pressure.
-    """
+    """Stress test: high demand variance, long lead times, short shelf life."""
     weekly = ComponentSpec(kind="weekly", params={"weekdays": [4], "hour": 18})
     continuous = ComponentSpec(kind="continuous")
 
@@ -158,12 +154,12 @@ def pharmacy_stress_experiment(
         replications=replications,
         initial_on_hand=100,
         target_service_level=0.95,
-        shelf_life_days=90.0,  # short shelf life to create realistic waste pressure
+        shelf_life_days=90.0,
         cost_model=CostModel(
-            holding_cost_per_unit_day=0.003,
-            backorder_penalty_per_unit_day=0.80,
-            lost_sale_penalty_per_unit=5.0,
-            waste_penalty_per_unit=4.0,
+            holding_cost_per_unit_day=1.0,  # EGP
+            backorder_penalty_per_unit_day=44.0,  # EGP
+            lost_sale_penalty_per_unit=275.0,  # EGP
+            waste_penalty_per_unit=220.0,  # EGP
         ),
         demand=ComponentSpec(
             kind="poisson",
@@ -183,8 +179,8 @@ def pharmacy_stress_experiment(
                 lead_time=ComponentSpec(
                     kind="normal", params={"mean_days": 7.0, "std_days": 2.5}
                 ),
-                unit_cost=3.50,
-                fixed_order_cost=10.0,
+                unit_cost=192.5,  # EGP
+                fixed_order_cost=550.0,  # EGP
                 order_multiple=12,
                 min_order_quantity=24,
             ),
@@ -204,12 +200,7 @@ def pharmacy_stress_experiment(
 def pharmacy_daily_experiment(
     replications: int = 10, horizon_days: int = 365
 ) -> ExperimentSpec:
-    """Daily automated ordering: low fixed cost, small lots, continuous review.
-
-    Models an electronic ordering system (e.g. EDI / API to wholesaler) where
-    there is negligible overhead per order.  The EOQ is small (~10-15 units) so
-    ordering every day or twice a day is economical.
-    """
+    """Daily automated ordering (EDI/API): negligible per-order cost, small lots."""
     continuous = ComponentSpec(kind="continuous")
     statistical = ComponentSpec(
         kind="statistical",
@@ -238,10 +229,10 @@ def pharmacy_daily_experiment(
         target_service_level=0.97,
         shelf_life_days=180.0,
         cost_model=CostModel(
-            holding_cost_per_unit_day=0.015,  # realistic capital + storage
-            backorder_penalty_per_unit_day=0.60,
-            lost_sale_penalty_per_unit=4.0,
-            waste_penalty_per_unit=3.5,
+            holding_cost_per_unit_day=0.825,  # EGP
+            backorder_penalty_per_unit_day=33.0,  # EGP
+            lost_sale_penalty_per_unit=220.0,  # EGP
+            waste_penalty_per_unit=192.5,  # EGP
         ),
         demand=ComponentSpec(
             kind="poisson",
@@ -260,9 +251,9 @@ def pharmacy_daily_experiment(
                 kind=LaneKind.REGULAR,
                 lead_time=ComponentSpec(
                     kind="normal", params={"mean_days": 1.0, "std_days": 0.25}
-                ),  # next-day delivery typical for daily ordering
-                unit_cost=3.20,
-                fixed_order_cost=0.10,  # automated — negligible per-order cost
+                ),
+                unit_cost=176.0,  # EGP
+                fixed_order_cost=5.5,  # EGP — automated, negligible per-order cost
                 order_multiple=1,
                 min_order_quantity=1,
             ),
@@ -277,12 +268,7 @@ def pharmacy_daily_experiment(
 def pharmacy_weekly_experiment(
     replications: int = 10, horizon_days: int = 365
 ) -> ExperimentSpec:
-    """Weekly manual ordering: higher fixed cost, case-pack multiples, Friday review.
-
-    Models a traditional purchasing process where a buyer places one order per
-    week.  The fixed cost per order is higher so the EOQ is larger (~80-100 units)
-    and ordering more than once a week is not cost-effective.
-    """
+    """Weekly manual ordering: case-pack multiples, Friday review."""
     weekly = ComponentSpec(kind="weekly", params={"weekdays": [4], "hour": 18})
     regular_sizing = ComponentSpec(
         kind="rounded",
@@ -312,10 +298,10 @@ def pharmacy_weekly_experiment(
         target_service_level=0.97,
         shelf_life_days=180.0,
         cost_model=CostModel(
-            holding_cost_per_unit_day=0.015,
-            backorder_penalty_per_unit_day=0.60,
-            lost_sale_penalty_per_unit=4.0,
-            waste_penalty_per_unit=3.5,
+            holding_cost_per_unit_day=0.825,  # EGP
+            backorder_penalty_per_unit_day=33.0,  # EGP
+            lost_sale_penalty_per_unit=220.0,  # EGP
+            waste_penalty_per_unit=192.5,  # EGP
         ),
         demand=ComponentSpec(
             kind="poisson",
@@ -335,9 +321,9 @@ def pharmacy_weekly_experiment(
                 lead_time=ComponentSpec(
                     kind="normal", params={"mean_days": 4.0, "std_days": 1.2}
                 ),
-                unit_cost=3.20,
-                fixed_order_cost=15.0,  # manual purchasing run
-                order_multiple=12,  # case packs
+                unit_cost=176.0,  # EGP
+                fixed_order_cost=825.0,  # EGP — manual purchasing run
+                order_multiple=12,
                 min_order_quantity=24,
             ),
         ),

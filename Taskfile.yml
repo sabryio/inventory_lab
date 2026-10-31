@@ -81,6 +81,16 @@ tasks:
     cmds:
       - uv run python scripts/run_stress.py
 
+  run:portfolio:
+    desc: "Run the 10-SKU portfolio consolidation comparison"
+    cmds:
+      - uv run inventory-lab portfolio --replications 5 --horizon 365
+
+  run:portfolio:egy:
+    desc: "Run the portfolio comparison with EGP salary-derived ordering cost"
+    cmds:
+      - uv run python scripts/run_portfolio.py
+
   optimize:egy:
     desc: "Optimize (s,Q) with EGP salary-derived ordering cost"
     cmds:

@@ -109,6 +109,15 @@ def build_parser() -> argparse.ArgumentParser:
     optimize.add_argument("--format", choices=("json", "console"), default="json")
     optimize.add_argument("--out", type=Path, help="Write result to a file")
 
+    portfolio = sub.add_parser(
+        "portfolio",
+        help="Run multi-SKU portfolio simulation with supplier consolidation",
+    )
+    portfolio.add_argument("--replications", type=int, default=10)
+    portfolio.add_argument("--horizon", type=int, default=365)
+    portfolio.add_argument("--format", choices=("console", "json"), default="console")
+    portfolio.add_argument("--out", type=Path, help="Write output to a file")
+
     return parser
 
 
@@ -175,6 +184,63 @@ def main(argv: list[str] | None = None) -> int:
                     f"success          : {result.success}"
                 )
             )
+        elif args.command == "portfolio":
+            import json as _json
+
+            from inventory_lab.application.portfolio_compare import (
+                ComparePortfolioStrategies,
+            )
+            from inventory_lab.infrastructure.portfolio_presets import (
+                pharmacy_portfolio_experiment,
+            )
+
+            pspec = pharmacy_portfolio_experiment(
+                replications=args.replications,
+                horizon_days=args.horizon,
+            )
+            result = ComparePortfolioStrategies().execute(pspec)
+
+            if args.format == "json":
+                rendered = result.model_dump_json(indent=2)
+            else:
+                sep = "=" * 68
+                lines = [
+                    "",
+                    sep,
+                    f"Portfolio: {result.experiment}",
+                    f"SKUs: {result.n_skus}  |  Replications: {result.replications}"
+                    f"  |  Horizon: {result.horizon_days}d",
+                    sep,
+                    "",
+                    f"{'SKU':<12} {'Fill':>7} {'Ready':>7} {'Avg OH':>8}"
+                    f" {'Orders':>7} {'Wasted':>7} {'Cost':>10} {'OK':>4}",
+                    "-" * 68,
+                ]
+                for s in result.sku_summaries:
+                    ok = "✓" if s.meets_service_target else "✗"
+                    lines.append(
+                        f"{s.sku_id:<12} {s.mean_fill_rate:>7.1%}"
+                        f" {s.mean_ready_rate:>7.1%}"
+                        f" {s.mean_avg_on_hand:>8.1f}"
+                        f" {s.mean_orders_placed:>7.1f}"
+                        f" {s.mean_units_wasted:>7.1f}"
+                        f" {s.mean_total_cost:>10,.0f}"
+                        f" {ok:>4}"
+                    )
+                lines += [
+                    "-" * 68,
+                    "",
+                    f"Total cost (independent):   {result.total_cost_independent:>12,.2f}",
+                    f"Total cost (consolidated):  {result.total_cost_consolidated:>12,.2f}",
+                    f"Fixed-cost saving:          {result.fixed_cost_saved:>12,.2f}"
+                    f"  ({result.savings_pct:.1f}%)",
+                    "",
+                    f"Portfolio fill rate:  {result.portfolio_fill_rate:.2%}",
+                    f"All SKUs meet target: {'Yes' if result.all_skus_meet_target else 'No'}",
+                    sep,
+                    "",
+                ]
+                rendered = "\n".join(lines)
         elif args.command == "safety-stock":
             result = NormalSafetyStock().compute(
                 SafetyStockContext(
