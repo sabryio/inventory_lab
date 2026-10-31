@@ -4,9 +4,21 @@
 from __future__ import annotations
 
 from inventory_lab.domain.base import ValueObject
-from inventory_lab.domain.inventory import InventoryState
+from inventory_lab.domain.inventory import InventoryState, PurchaseOrder
 from inventory_lab.ports.reporting import TraceRecord
 from inventory_lab.simulation.costs import CostBreakdown
+
+
+class OrderRecord(ValueObject):
+    """Lightweight immutable record of a placed order, used for consolidation."""
+
+    order_id: str
+    lane_id: str
+    quantity: int
+    placed_at: float
+    due_at: float
+    unit_cost: float
+    fixed_cost: float
 
 
 class KpiSnapshot(ValueObject):
@@ -40,3 +52,9 @@ class SimulationResult(ValueObject):
     replication: int
     kpis: KpiSnapshot
     trace: tuple[TraceRecord, ...] = ()
+    order_log: tuple[OrderRecord, ...] = ()
+    """Per-order log for portfolio-level post-processing (e.g. consolidation).
+
+    Empty by default to keep single-SKU simulations lean. ``PortfolioEngine``
+    enables it by setting ``collect_order_log=True`` on the engine.
+    """

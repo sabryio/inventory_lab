@@ -118,6 +118,64 @@ def build_parser() -> argparse.ArgumentParser:
     portfolio.add_argument("--format", choices=("console", "json"), default="console")
     portfolio.add_argument("--out", type=Path, help="Write output to a file")
 
+    opt_portfolio = sub.add_parser(
+        "optimize-portfolio",
+        help="Optimise shared review period and safety factor across a SKU portfolio",
+    )
+    opt_portfolio.add_argument(
+        "--replications",
+        type=int,
+        default=5,
+        help="Replications per evaluation — more is slower but more accurate (default: 5)",
+    )
+    opt_portfolio.add_argument(
+        "--max-evals",
+        type=int,
+        default=50,
+        help="Maximum objective evaluations (default: 50)",
+    )
+    opt_portfolio.add_argument(
+        "--horizon",
+        type=int,
+        default=365,
+        help="Simulation horizon in days (default: 365)",
+    )
+    opt_portfolio.add_argument(
+        "--review-min",
+        type=int,
+        default=1,
+        metavar="R_MIN",
+        help="Min shared review period in days (default: 1)",
+    )
+    opt_portfolio.add_argument(
+        "--review-max",
+        type=int,
+        default=14,
+        metavar="R_MAX",
+        help="Max shared review period in days (default: 14)",
+    )
+    opt_portfolio.add_argument(
+        "--safety-min",
+        type=float,
+        default=0.5,
+        metavar="SF_MIN",
+        help="Min safety factor multiplier (default: 0.5)",
+    )
+    opt_portfolio.add_argument(
+        "--safety-max",
+        type=float,
+        default=3.0,
+        metavar="SF_MAX",
+        help="Max safety factor multiplier (default: 3.0)",
+    )
+    opt_portfolio.add_argument(
+        "--format",
+        choices=("json", "console"),
+        default="json",
+        help="Output format (default: json)",
+    )
+    opt_portfolio.add_argument("--out", type=Path, help="Write result to a file")
+
     return parser
 
 
@@ -241,6 +299,55 @@ def main(argv: list[str] | None = None) -> int:
                     "",
                 ]
                 rendered = "\n".join(lines)
+        elif args.command == "optimize-portfolio":
+            from inventory_lab.application.optimize_portfolio import OptimizePortfolio
+            from inventory_lab.infrastructure.portfolio_optimization import (
+                ScipyPortfolioOptimizer,
+            )
+            from inventory_lab.infrastructure.portfolio_presets import (
+                pharmacy_portfolio_experiment,
+            )
+            from inventory_lab.ports.portfolio_optimization import (
+                PortfolioOptimizationBounds,
+            )
+
+            pspec = pharmacy_portfolio_experiment(
+                replications=args.replications,
+                horizon_days=args.horizon,
+            )
+            bounds = PortfolioOptimizationBounds(
+                review_period_min=args.review_min,
+                review_period_max=args.review_max,
+                safety_factor_min=args.safety_min,
+                safety_factor_max=args.safety_max,
+            )
+            result = OptimizePortfolio(ScipyPortfolioOptimizer()).execute(
+                spec=pspec,
+                bounds=bounds,
+                replications_per_eval=args.replications,
+                max_evaluations=args.max_evals,
+            )
+            if args.format == "json":
+                rendered = result.model_dump_json(indent=2)
+            else:
+                sep = "=" * 68
+                rendered = "\n".join(
+                    [
+                        "",
+                        sep,
+                        "Portfolio Optimisation Result",
+                        sep,
+                        f"Best review period  : {result.best_review_period} days",
+                        f"Best safety factor  : {result.best_safety_factor:.3f}",
+                        f"Best total cost     : {result.best_total_cost:,.2f}",
+                        f"Achieved fill rate  : {result.achieved_fill_rate:.2%}",
+                        f"Fixed-cost savings  : {result.total_fixed_cost_savings:,.2f}",
+                        f"Evaluations         : {result.evaluations}",
+                        f"Success             : {result.success}",
+                        sep,
+                        "",
+                    ]
+                )
         elif args.command == "safety-stock":
             result = NormalSafetyStock().compute(
                 SafetyStockContext(

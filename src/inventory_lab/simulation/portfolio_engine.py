@@ -2,20 +2,33 @@
 
 Design
 ------
-Each SKU gets its own `SimulationEngine`, `InventoryLedger`, `KpiAccumulator`, and
-independent demand stream.  The portfolio layer runs them all, then post-processes
-the order logs to calculate consolidation savings.
+Each SKU gets its own SimulationEngine, InventoryLedger, KpiAccumulator, and
+independent demand stream.
 
-Consolidation logic
--------------------
-Two orders are consolidable when they arrive at the same supplier lane on the same
-calendar day (floor of `placed_at`).  On a Friday-review schedule every SKU reviews
-at the same time, so they naturally cluster.  The saving is:
+When consolidation_enabled=False
+---------------------------------
+All engines run sequentially via engine.run(). Post-processing with the order
+log computes exact savings for reporting.
 
-    saved_fixed_cost = (n_skus_in_group - 1) × lane.fixed_order_cost
+When consolidation_enabled=True
+--------------------------------
+Engines run in lockstep so a shared ConsolidationCoordinator can see all orders
+from all SKUs before any snapshot fires. For each day t=1..horizon:
 
-This is credited back as a negative cost adjustment so each per-SKU `SimulationResult`
-remains unchanged and comparable to independent runs.
+1. Every engine steps through all events with time < t (demand, reviews, receipts
+   from prior consolidated orders). Any order the engine wants to place is
+   intercepted by the coordinator (suppressed, stored with owner tag).
+
+2. After all engines have stepped, the coordinator flushes: it groups pending
+   orders by (lane_id, due_at) and splits the lane's fixed cost proportionally
+   by quantity.
+
+3. Each engine receives its own consolidated orders via _place_deferred, which
+   registers them in the ledger and schedules receipt events. The engine then
+   processes its snapshot event (day-boundary KPI anchor).
+
+This eliminates the sequential-engine timing problem: by the time any snapshot
+fires, every SKU has already had a chance to place its orders for that day.
 """
 
 from __future__ import annotations
@@ -24,15 +37,15 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from math import floor
 from random import Random
-from statistics import mean
 
-from inventory_lab.application.portfolio_specs import PortfolioSpec, SkuSpec
 from inventory_lab.application.factory import SimulationClock
+from inventory_lab.application.portfolio_specs import PortfolioSpec, SkuSpec
 from inventory_lab.core.registry import BuildContext
 from inventory_lab.domain.order import ConsolidatedPurchaseOrder, OrderLineItem
 from inventory_lab.domain.supply import SupplyLane
 from inventory_lab.forecasting.forecast import forecast_registry
-from inventory_lab.infrastructure.tracing import InMemoryTraceSink, NullTraceSink
+from inventory_lab.infrastructure.consolidation import ConsolidationCoordinator
+from inventory_lab.infrastructure.tracing import InMemoryTraceSink
 from inventory_lab.policies import factories as _policy_factories  # noqa: F401
 from inventory_lab.policies.factories import policy_registry
 from inventory_lab.ports.demand import DemandObserver
@@ -43,15 +56,13 @@ from inventory_lab.simulation import demand as _demand_components  # noqa: F401
 from inventory_lab.simulation.demand import demand_registry
 from inventory_lab.simulation.engine import EngineConfig, SimulationEngine
 from inventory_lab.simulation.ledger import InventoryLedger
-from inventory_lab.simulation.result import SimulationResult
+from inventory_lab.simulation.result import OrderRecord, SimulationResult
 from inventory_lab.sourcing.lead_time import lead_time_registry
 from inventory_lab.sourcing.runtime import LaneRuntime
 
 
 @dataclass
 class _SkuBundle:
-    """Everything needed to run one SKU for one replication."""
-
     sku_id: str
     engine: SimulationEngine
 
@@ -62,18 +73,13 @@ class PortfolioRunResult:
 
     sku_results: dict[str, SimulationResult]
 
-    # Consolidation accounting (zero when consolidation_enabled=False)
+    # Zero when consolidation_enabled=False
     consolidated_orders: list[ConsolidatedPurchaseOrder] = field(default_factory=list)
     total_fixed_cost_saved: float = 0.0
 
 
 class PortfolioEngine:
-    """Runs a multi-SKU portfolio for one replication.
-
-    Consolidation is applied as a post-processing credit: we identify orders that
-    were placed on the same lane on the same day, merge them into a
-    `ConsolidatedPurchaseOrder`, and compute the fixed-cost saving.
-    """
+    """Runs a multi-SKU portfolio for one replication."""
 
     def __init__(
         self,
@@ -85,10 +91,8 @@ class PortfolioEngine:
         self._seed = seed
         self._replication = replication
 
-        # shared clock (all SKUs live on the same calendar)
         self._clock = SimulationClock(start_date=spec.start_date)
 
-        # shared lane runtimes (lanes are shared infrastructure)
         rng0 = Random(seed ^ 0xBEEF)
         base_ctx = BuildContext(
             clock=self._clock,
@@ -104,20 +108,21 @@ class PortfolioEngine:
             for lane in spec.lanes
         }
 
+        # Build the shared coordinator when consolidation is active.
+        self._coordinator: ConsolidationCoordinator | None = (
+            ConsolidationCoordinator(self._lanes)
+            if spec.consolidation_enabled
+            else None
+        )
+
         self._bundles: list[_SkuBundle] = [
-            self._build_sku(sku, seed, replication)
-            for sku in spec.skus
+            self._build_sku(sku, seed, replication) for sku in spec.skus
         ]
 
     # ------------------------------------------------------------------
 
-    def _build_sku(
-        self, sku: SkuSpec, seed: int, replication: int
-    ) -> _SkuBundle:
-        # Each SKU gets its own RNG derived from the shared seed so demand
-        # streams are independent but reproducible.
+    def _build_sku(self, sku: SkuSpec, seed: int, replication: int) -> _SkuBundle:
         rng = Random(seed ^ hash(sku.sku_id) & 0xFFFF_FFFF)
-
         base_ctx = BuildContext(
             clock=self._clock,
             forecast=None,
@@ -125,7 +130,6 @@ class PortfolioEngine:
             cost_model=self._spec.cost_model,
         )
         forecast = forecast_registry.create(sku.forecast, base_ctx)
-
         ctx = BuildContext(
             clock=self._clock,
             forecast=forecast,
@@ -136,9 +140,7 @@ class PortfolioEngine:
         )
         policy = policy_registry.create(sku.policy, ctx)
         generator = demand_registry.create(sku.demand, ctx)
-        events = list(
-            generator.generate(self._spec.horizon_days, rng, self._clock)
-        )
+        events = list(generator.generate(self._spec.horizon_days, rng, self._clock))
 
         engine = SimulationEngine(
             config=EngineConfig(
@@ -147,6 +149,8 @@ class PortfolioEngine:
                 shortage_mode=self._spec.shortage_mode,
                 collect_trace=self._spec.collect_trace,
                 shelf_life_days=sku.shelf_life_days,
+                # Order log for post-processing savings summary in independent mode.
+                collect_order_log=self._spec.consolidation_enabled,
             ),
             clock=self._clock,
             ledger=InventoryLedger(sku.initial_on_hand, self._spec.shortage_mode),
@@ -159,109 +163,131 @@ class PortfolioEngine:
             policy_code=policy.code,
             seed=seed,
             replication=replication,
-            forecast_observer=forecast if isinstance(forecast, DemandObserver) else None,
+            forecast_observer=forecast
+            if isinstance(forecast, DemandObserver)
+            else None,
             tracer=InMemoryTraceSink() if self._spec.collect_trace else None,
+            # Inject the shared coordinator only when consolidation is active.
+            order_interceptor=self._coordinator,
         )
+        # In lockstep mode the portfolio engine drives flush/place directly;
+        # suppress the engine-level _on_snapshot hook to prevent premature flushes.
+        if self._spec.consolidation_enabled:
+            engine._lockstep_mode = True
         return _SkuBundle(sku_id=sku.sku_id, engine=engine)
 
     # ------------------------------------------------------------------
 
     def run(self) -> PortfolioRunResult:
+        if self._spec.consolidation_enabled:
+            return self._run_lockstep()
+        # Fast path: no consolidation — run each engine independently.
         sku_results = {b.sku_id: b.engine.run() for b in self._bundles}
+        return PortfolioRunResult(sku_results=sku_results)
 
-        if not self._spec.consolidation_enabled:
-            return PortfolioRunResult(sku_results=sku_results)
+    # ------------------------------------------------------------------
+    # Lockstep execution (consolidation enabled)
+    # ------------------------------------------------------------------
 
-        consolidated, saved = self._consolidate(sku_results)
+    def _run_lockstep(self) -> PortfolioRunResult:
+        """Drive all SKU engines day-by-day in lockstep.
+
+        For each day boundary t the protocol is:
+          1. step_until(t) on every engine  -- intra-day events
+          2. coordinator.flush(t)           -- group + cost-split
+          3. _place_deferred per engine     -- inject consolidated orders
+          4. process_snapshot(t) per engine -- day-boundary KPI
+        """
+        assert self._coordinator is not None
+        coordinator = self._coordinator
+
+        # Seed all event queues.
+        for bundle in self._bundles:
+            bundle.engine.prepare()
+
+        horizon = self._spec.horizon_days
+
+        for day in range(1, horizon + 1):
+            t = float(day)
+
+            # Step 1: advance all engines to just before the snapshot.
+            for bundle in self._bundles:
+                bundle.engine.step_until(t)
+
+            # Step 2: flush — all SKUs have now placed their orders for this day.
+            coordinator.flush(t)
+
+            # Step 3 + 4: inject consolidated orders, then fire the snapshot.
+            for bundle in self._bundles:
+                for order in coordinator.get_pending(bundle.sku_id):
+                    bundle.engine._place_deferred(order)
+                bundle.engine.process_snapshot(t)
+
+        # Collect final results (drains any residual events beyond last snapshot).
+        sku_results = {b.sku_id: b.engine.finalise() for b in self._bundles}
+
+        # Derive the savings summary from the order logs recorded by each engine.
+        consolidated, saved = self._summarise_consolidation(sku_results)
         return PortfolioRunResult(
             sku_results=sku_results,
             consolidated_orders=consolidated,
             total_fixed_cost_saved=saved,
         )
 
-    def _consolidate(
+    # ------------------------------------------------------------------
+    # Consolidation savings summary (exact, from order logs)
+    # ------------------------------------------------------------------
+
+    def _summarise_consolidation(
         self, results: dict[str, SimulationResult]
     ) -> tuple[list[ConsolidatedPurchaseOrder], float]:
-        """Merge same-day, same-lane orders across SKUs into consolidated orders.
+        """Group per-SKU order logs by (lane_id, day_bucket) to compute savings.
 
-        Groups orders by (lane_id, floor(placed_at)).  Any group with > 1 SKU pays
-        the fixed cost only once; the rest is credited back.
+        The actual fixed cost was already split in the coordinator; here we
+        compute the total saved for reporting: (n_skus_in_group - 1) * fixed.
         """
         lane_by_id: dict[str, SupplyLane] = {
             lane.lane_id: lane for lane in self._spec.lanes
         }
 
-        # Collect all orders across SKUs, tagged with their sku_id
-        # We read them from the trace (keep_replications=False so no raw results)
-        # Instead, re-derive from KPI ordering cost: we need order-level detail.
-        # The engine does not expose per-order logs in KpiSnapshot, so we infer
-        # consolidation groups from the number of orders placed per replication
-        # and their timing — approximated here via orders_placed count.
-        #
-        # For an exact implementation the engine would need an order log port.
-        # The approach below uses a conservative approximation: on a weekly review,
-        # all SKUs review on the same day → every group of N weekly orders on the
-        # same day can be consolidated into 1, saving (N-1) × fixed_cost.
-        #
-        # We approximate: group_size ≈ min(len(skus), orders_placed per sku).
-        # For a proper implementation, add an order log to SimulationResult.
+        # (lane_id, day_bucket) -> [(sku_id, OrderRecord)]
+        groups: dict[tuple[str, int], list[tuple[str, OrderRecord]]] = defaultdict(list)
+        for sku_id, result in results.items():
+            for rec in result.order_log:
+                key = (rec.lane_id, floor(rec.placed_at))
+                groups[key].append((sku_id, rec))
 
-        fixed_cost_per_lane: dict[str, float] = {
-            lane.lane_id: lane.fixed_order_cost for lane in self._spec.lanes
-        }
-
-        # Count orders per SKU per lane (from KPI)
-        sku_order_counts: dict[str, int] = {
-            sku_id: result.kpis.orders_placed
-            for sku_id, result in results.items()
-        }
-
-        # Assume all SKUs use the first lane (standard portfolio assumption)
-        primary_lane_id = self._spec.lanes[0].lane_id
-        fixed_cost = fixed_cost_per_lane[primary_lane_id]
-
-        # Conservative estimate: consolidated groups = max orders placed by any SKU.
-        # Each group contains all SKUs that ordered in that review window, paying
-        # the fixed cost once instead of N times.
-        n_skus = len(results)
-        max_orders = max(sku_order_counts.values()) if sku_order_counts else 0
-        if max_orders == 0 or n_skus <= 1:
-            return [], 0.0
-
-        # Build representative consolidated orders
         consolidated: list[ConsolidatedPurchaseOrder] = []
         total_saved = 0.0
+        group_counter = 0
 
-        for group_idx in range(max_orders):
-            # Gather SKUs that placed at least (group_idx + 1) orders
-            participating = [
-                sku_id
-                for sku_id, count in sku_order_counts.items()
-                if count > group_idx
-            ]
-            if len(participating) <= 1:
-                continue  # no consolidation benefit for a single-SKU group
+        for (lane_id, _day), entries in groups.items():
+            unique_skus = {sid for sid, _ in entries}
+            if len(unique_skus) <= 1:
+                continue
 
-            # Fixed cost saving: paid once instead of len(participating) times
-            saved = (len(participating) - 1) * fixed_cost
+            lane = lane_by_id[lane_id]
+            fixed = lane.fixed_order_cost
+            saved = (len(unique_skus) - 1) * fixed
             total_saved += saved
 
-            line_items = tuple(
-                OrderLineItem(
-                    sku_id=sku_id,
-                    quantity=1,   # representative; actual qty is in SimulationResult
-                    unit_cost=lane_by_id[primary_lane_id].unit_cost,
-                )
-                for sku_id in participating
-            )
+            group_counter += 1
+            _, first_rec = entries[0]
             consolidated.append(
                 ConsolidatedPurchaseOrder(
-                    order_id=f"CON-{group_idx + 1}",
-                    lane_id=primary_lane_id,
-                    line_items=line_items,
-                    placed_at=float(group_idx * 7),   # approximate weekly cadence
-                    due_at=float(group_idx * 7 + lane_by_id[primary_lane_id].lead_time.params.get("mean_days", 4)),
-                    fixed_cost=fixed_cost,
+                    order_id=f"CON-{group_counter}",
+                    lane_id=lane_id,
+                    line_items=tuple(
+                        OrderLineItem(
+                            sku_id=sid,
+                            quantity=rec.quantity,
+                            unit_cost=rec.unit_cost,
+                        )
+                        for sid, rec in entries
+                    ),
+                    placed_at=first_rec.placed_at,
+                    due_at=first_rec.due_at,
+                    fixed_cost=fixed,
                 )
             )
 
