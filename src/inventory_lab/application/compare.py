@@ -43,6 +43,7 @@ _METRICS: tuple[tuple[str, str], ...] = (
     ("purchasing_cost", "costs.purchasing"),
     ("shortage_penalty", "costs.backorder_penalty"),
     ("lost_sales_penalty", "costs.lost_sales_penalty"),
+    ("waste_penalty", "costs.waste_penalty"),
     ("fill_rate", "fill_rate"),
     ("ready_rate", "ready_rate"),
     ("avg_on_hand", "avg_on_hand"),
@@ -50,6 +51,7 @@ _METRICS: tuple[tuple[str, str], ...] = (
     ("orders_placed", "orders_placed"),
     ("emergency_orders", "emergency_orders_placed"),
     ("units_lost", "units_lost"),
+    ("units_wasted", "units_wasted"),
     ("inventory_turns", "inventory_turns"),
 )
 

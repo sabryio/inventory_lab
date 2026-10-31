@@ -199,3 +199,152 @@ def pharmacy_stress_experiment(
             CandidateSpec(name="weekly_Rs_nQ", policy=regular_policy("R_s_nQ", weekly)),
         ),
     )
+
+
+def pharmacy_daily_experiment(
+    replications: int = 10, horizon_days: int = 365
+) -> ExperimentSpec:
+    """Daily automated ordering: low fixed cost, small lots, continuous review.
+
+    Models an electronic ordering system (e.g. EDI / API to wholesaler) where
+    there is negligible overhead per order.  The EOQ is small (~10-15 units) so
+    ordering every day or twice a day is economical.
+    """
+    continuous = ComponentSpec(kind="continuous")
+    statistical = ComponentSpec(
+        kind="statistical",
+        params={
+            "safety": {"kind": "normal"},
+            "sizing": {"kind": "fixed", "params": {"quantity": 12}},
+        },
+    )
+
+    def policy(kind: str) -> ComponentSpec:
+        return ComponentSpec(
+            kind=kind,
+            params={
+                "lane_id": REGULAR,
+                "schedule": continuous.model_dump(),
+                "parameters": statistical.model_dump(),
+            },
+        )
+
+    return ExperimentSpec(
+        name="pharmacy_daily_ordering",
+        horizon_days=horizon_days,
+        warmup_days=14,
+        replications=replications,
+        initial_on_hand=60,
+        target_service_level=0.97,
+        shelf_life_days=180.0,
+        cost_model=CostModel(
+            holding_cost_per_unit_day=0.015,  # realistic capital + storage
+            backorder_penalty_per_unit_day=0.60,
+            lost_sale_penalty_per_unit=4.0,
+            waste_penalty_per_unit=3.5,
+        ),
+        demand=ComponentSpec(
+            kind="poisson",
+            params={
+                "mean_daily": 12.0,
+                "weekday_factors": [1.3, 1.1, 1.0, 1.0, 1.2, 0.6, 0.2],
+            },
+        ),
+        forecast=ComponentSpec(
+            kind="rolling",
+            params={"prior_mean": 12.0, "prior_std": 3.6, "window_days": 90},
+        ),
+        lanes=(
+            SupplyLane(
+                lane_id=REGULAR,
+                kind=LaneKind.REGULAR,
+                lead_time=ComponentSpec(
+                    kind="normal", params={"mean_days": 1.0, "std_days": 0.25}
+                ),  # next-day delivery typical for daily ordering
+                unit_cost=3.20,
+                fixed_order_cost=0.10,  # automated — negligible per-order cost
+                order_multiple=1,
+                min_order_quantity=1,
+            ),
+        ),
+        candidates=(
+            CandidateSpec(name="daily_sQ", policy=policy("s_Q")),
+            CandidateSpec(name="daily_RS", policy=policy("R_S")),
+        ),
+    )
+
+
+def pharmacy_weekly_experiment(
+    replications: int = 10, horizon_days: int = 365
+) -> ExperimentSpec:
+    """Weekly manual ordering: higher fixed cost, case-pack multiples, Friday review.
+
+    Models a traditional purchasing process where a buyer places one order per
+    week.  The fixed cost per order is higher so the EOQ is larger (~80-100 units)
+    and ordering more than once a week is not cost-effective.
+    """
+    weekly = ComponentSpec(kind="weekly", params={"weekdays": [4], "hour": 18})
+    regular_sizing = ComponentSpec(
+        kind="rounded",
+        params={"inner": {"kind": "eoq"}, "multiple": 12, "minimum": 24},
+    )
+    statistical = ComponentSpec(
+        kind="statistical",
+        params={"safety": {"kind": "normal"}, "sizing": regular_sizing},
+    )
+
+    def policy(kind: str) -> ComponentSpec:
+        return ComponentSpec(
+            kind=kind,
+            params={
+                "lane_id": REGULAR,
+                "schedule": weekly.model_dump(),
+                "parameters": statistical.model_dump(),
+            },
+        )
+
+    return ExperimentSpec(
+        name="pharmacy_weekly_ordering",
+        horizon_days=horizon_days,
+        warmup_days=30,
+        replications=replications,
+        initial_on_hand=150,
+        target_service_level=0.97,
+        shelf_life_days=180.0,
+        cost_model=CostModel(
+            holding_cost_per_unit_day=0.015,
+            backorder_penalty_per_unit_day=0.60,
+            lost_sale_penalty_per_unit=4.0,
+            waste_penalty_per_unit=3.5,
+        ),
+        demand=ComponentSpec(
+            kind="poisson",
+            params={
+                "mean_daily": 12.0,
+                "weekday_factors": [1.3, 1.1, 1.0, 1.0, 1.2, 0.6, 0.2],
+            },
+        ),
+        forecast=ComponentSpec(
+            kind="rolling",
+            params={"prior_mean": 12.0, "prior_std": 3.6, "window_days": 90},
+        ),
+        lanes=(
+            SupplyLane(
+                lane_id=REGULAR,
+                kind=LaneKind.REGULAR,
+                lead_time=ComponentSpec(
+                    kind="normal", params={"mean_days": 4.0, "std_days": 1.2}
+                ),
+                unit_cost=3.20,
+                fixed_order_cost=15.0,  # manual purchasing run
+                order_multiple=12,  # case packs
+                min_order_quantity=24,
+            ),
+        ),
+        candidates=(
+            CandidateSpec(name="weekly_RsQ", policy=policy("R_s_Q")),
+            CandidateSpec(name="weekly_RsS", policy=policy("R_s_S")),
+            CandidateSpec(name="weekly_RS", policy=policy("R_S")),
+            CandidateSpec(name="weekly_Rs_nQ", policy=policy("R_s_nQ")),
+        ),
+    )

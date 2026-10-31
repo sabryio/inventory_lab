@@ -81,6 +81,26 @@ tasks:
     cmds:
       - uv run python scripts/run_stress.py
 
+  optimize:egy:
+    desc: "Optimize (s,Q) with EGP salary-derived ordering cost"
+    cmds:
+      - uv run python scripts/run_optimize_egy.py
+
+  optimize:pharmacy:
+    desc: "Optimize (s,Q) — daily ordering preset (~60 s)"
+    cmds:
+      - uv run python scripts/run_optimize.py
+
+  optimize:weekly:
+    desc: "Optimize (R,s,Q) — weekly ordering preset (~60 s)"
+    cmds:
+      - uv run python scripts/run_optimize_weekly.py
+
+  optimize:stress:
+    desc: "Optimize (R,s,Q) for the stress scenario (~2 min)"
+    cmds:
+      - uv run python scripts/run_optimize.py --policy R_s_Q --preset stress --replications 5 --max-evals 150
+
   # ── housekeeping ──────────────────────────────────────────────────────────
 
   clean:
